@@ -3,6 +3,7 @@ import { config } from '../../config.js';
 import { chatStore } from '../../wa/chatStore.js';
 import type { ChatKind, ChatSummary } from '../../wa/chatStore.js';
 import { listGroups } from '../../wa/groups.js';
+import { chatListResponse, errorResponse } from '../schemas.js';
 
 const KINDS = ['all', 'dm', 'group', 'broadcast', 'newsletter', 'other'] as const;
 
@@ -10,10 +11,14 @@ const querySchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    kind: { type: 'string', enum: [...KINDS] },
-    search: { type: 'string', maxLength: 100 },
-    limit: { type: 'integer', minimum: 1, maximum: 10000 },
-    includeArchived: { type: 'string', enum: ['true', 'false'] },
+    kind: { type: 'string', enum: [...KINDS], default: 'all' },
+    search: {
+      type: 'string',
+      maxLength: 100,
+      description: 'Case-insensitive substring of the name or the JID.',
+    },
+    limit: { type: 'integer', minimum: 1, maximum: 10000, description: 'Applied after filtering.' },
+    includeArchived: { type: 'string', enum: ['true', 'false'], default: 'true' },
   },
 } as const;
 
@@ -30,7 +35,21 @@ type Query = { kind?: (typeof KINDS)[number]; search?: string; limit?: number; i
 export const chatRoutes: FastifyPluginAsync = async (app) => {
   app.get<{ Querystring: Query }>(
     '/chats',
-    { schema: { querystring: querySchema } },
+    {
+      schema: {
+        tags: ['chats'],
+        summary: 'List conversations',
+        description:
+          'Groups and 1:1 chats in one list, from two different mechanisms.\n\n**Groups** come from a live RPC and are complete on the first call. **1:1 chats have no fetch-all RPC** - verified against the pinned Baileys build, the socket exposes `chatModify` and nothing that reads a chat list - so they are *pushed* in chunks after linking. One request only sees what has arrived so far, which is what `historySync` reports: poll until `complete` is true.\n\nThe history push carries a `messages` array that is deliberately never retained. Only chat metadata is kept, so this is not a message archive. The store is in-memory and lost on restart.',
+        querystring: querySchema,
+        response: {
+          200: chatListResponse,
+          400: errorResponse('Unknown `kind`, or a bad `limit`.', 'bad_request'),
+          401: errorResponse('Missing or wrong API key.', 'unauthorized'),
+          503: errorResponse('Socket not connected. Read /health.', 'wa_not_connected'),
+        },
+      },
+    },
     async (req, reply) => {
       // Throws WaNotConnected -> 503, same as /groups.
       const groups = await listGroups();

@@ -1,5 +1,5 @@
-import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { humanizer } from './humanizer.js';
 
 /**
  * Serialises every outbound WhatsApp operation and paces consecutive sends.
@@ -29,7 +29,9 @@ export class SendQueue {
     this.pending += 1;
 
     const run = this.chain.then(async () => {
-      const wait = config.SEND_MIN_INTERVAL_MS - (Date.now() - this.lastRunAt);
+      // Jittered rather than a fixed floor: identical gaps between every message are a
+      // machine signature in their own right. See humanizer.ts.
+      const wait = humanizer.nextGapMs(this.lastRunAt);
       if (wait > 0) await sleep(wait);
       try {
         return await task();

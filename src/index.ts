@@ -20,6 +20,9 @@ async function main(): Promise<void> {
   if (config.ENABLE_UI) {
     logger.info(`test console: http://127.0.0.1:${config.PORT}/ui (loopback only)`);
   }
+  if (config.ENABLE_DOCS) {
+    logger.info(`API docs: http://127.0.0.1:${config.PORT}/docs (loopback only)`);
+  }
 
   await waClient.start();
 

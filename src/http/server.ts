@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import rateLimit from '@fastify/rate-limit';
+import swagger from '@fastify/swagger';
 import Fastify, {
   type FastifyBaseLogger,
   type FastifyError,
@@ -8,9 +9,11 @@ import Fastify, {
 import { MAX_BODY_BYTES, config } from '../config.js';
 import { logger } from '../logger.js';
 import { isValidApiKey, requireApiKey } from './auth.js';
+import { OPENAPI_OPTIONS, docsUiPlugin } from './openapi.js';
 import { chatRoutes } from './routes/chats.js';
 import { groupRoutes } from './routes/groups.js';
 import { healthRoutes } from './routes/health.js';
+import { limitsRoutes } from './routes/limits.js';
 import { pairRoutes } from './routes/pair.js';
 import { qrRoutes } from './routes/qr.js';
 import { sendRoutes } from './routes/send.js';
@@ -24,10 +27,23 @@ const ERROR_STATUS: Record<string, number> = {
   InvalidParticipant: 400,
   InvalidGroupJid: 400,
   AlreadyLinked: 409,
+  // Pacing refusals. 429 for the volume caps, since the caller may retry later; 503 for
+  // quiet hours, because the block is a property of the clock rather than of the caller.
+  HourlyLimit: 429,
+  DailyLimit: 429,
+  TargetCooldown: 429,
+  QuietHours: 503,
 };
 
 /** Routes that must work without an API key: the watchdog probe and the static console. */
 const PUBLIC_PATHS = new Set(['/health', '/ui', '/']);
+
+/**
+ * Path prefixes exempt from the API key. Only the docs, whose static assets a browser
+ * cannot attach a header to. They enforce loopback themselves in openapi.ts - the
+ * exemption is from authentication, not from that gate.
+ */
+const PUBLIC_PREFIXES = ['/docs'];
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -76,7 +92,9 @@ export async function buildServer(): Promise<FastifyInstance> {
   // Registered before the rate limiter so unauthenticated traffic cannot consume a
   // legitimate key's bucket.
   app.addHook('onRequest', async (req, reply) => {
-    if (PUBLIC_PATHS.has(req.url.split('?')[0] ?? '')) return;
+    const path = req.url.split('?')[0] ?? '';
+    if (PUBLIC_PATHS.has(path)) return;
+    if (PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))) return;
     await requireApiKey(req, reply);
   });
 
@@ -93,6 +111,10 @@ export async function buildServer(): Promise<FastifyInstance> {
     },
   });
 
+  // Before the routes: the plugin builds the OpenAPI document from the schemas of
+  // routes registered after it, so anything added earlier would be undocumented.
+  if (config.ENABLE_DOCS) await app.register(swagger, OPENAPI_OPTIONS);
+
   await app.register(healthRoutes);
   await app.register(uiRoutes);
   await app.register(qrRoutes);
@@ -100,6 +122,10 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(groupRoutes);
   await app.register(chatRoutes);
   await app.register(sendRoutes);
+  await app.register(limitsRoutes);
+
+  // After the routes, so the served document includes every one of them.
+  if (config.ENABLE_DOCS) await app.register(docsUiPlugin);
 
   return app;
 }

@@ -1,21 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../../config.js';
+import { rejectIfRemote } from '../localOnly.js';
 import { UI_PAGE } from '../ui/page.js';
-
-const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-
-/**
- * The socket's peer address, which cannot be forged by a header.
- *
- * `req.ip` respects `trustProxy`, so a request straight to the port carrying
- * `X-Forwarded-For: 127.0.0.1` would read as loopback. Both are checked: the raw
- * peer proves nothing was proxied, `req.ip` catches a same-host nginx forwarding a
- * remote client.
- */
-function isLocalOnly(req: FastifyRequest): boolean {
-  const peer = req.socket.remoteAddress ?? '';
-  return LOOPBACK.has(peer) && LOOPBACK.has(req.ip);
-}
 
 /**
  * Browser test console. Unauthenticated by design - it is a static page holding no
@@ -29,15 +15,7 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
   if (!config.ENABLE_UI) return;
 
   const handler = async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!isLocalOnly(req)) {
-      req.log.warn({ ip: req.ip, peer: req.socket.remoteAddress }, 'blocked remote /ui request');
-      return reply.code(403).send({
-        error: 'local_only',
-        message:
-          'The test console links devices to the WhatsApp account, so it is loopback-only. ' +
-          'Use: ssh -L 3000:127.0.0.1:3000 user@host',
-      });
-    }
+    if (rejectIfRemote(req, reply, 'The test console')) return reply;
     return reply
       .code(200)
       .header('content-type', 'text/html; charset=utf-8')
@@ -50,7 +28,13 @@ export const uiRoutes: FastifyPluginAsync = async (app) => {
       .send(UI_PAGE);
   };
 
-  app.get('/ui', { config: { rateLimit: false } }, handler);
+  // `hide: true` keeps these out of the OpenAPI document. They serve one HTML page, not
+  // an API, and listing them as endpoints with no schema is worse than omitting them.
+  // `as const` matters: without it `rateLimit` widens to `boolean`, which the rate-limit
+  // plugin's `false | RateLimitOptions` type rejects.
+  const opts = { config: { rateLimit: false }, schema: { hide: true } } as const;
+
+  app.get('/ui', opts, handler);
   // Bare / is what an operator types after opening the tunnel.
-  app.get('/', { config: { rateLimit: false } }, handler);
+  app.get('/', opts, handler);
 };

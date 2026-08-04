@@ -30,7 +30,9 @@ export const UI_PAGE = `<!doctype html>
   textarea { resize:vertical; min-height:70px; }
   button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 14px;
            cursor:pointer; font-weight:600; }
-  button.ghost { background:#20242e; color:var(--fg); border:1px solid var(--line); font-weight:400; }
+  button.ghost, a.ghost { background:#20242e; color:var(--fg); border:1px solid var(--line); font-weight:400; }
+  /* The docs link is an anchor, so the button rules above do not reach it. */
+  a.ghost { border-radius:6px; padding:8px 14px; text-decoration:none; display:inline-block; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
   .warn { background:#2b1a1a; border:1px solid #6b2626; color:#ffb4ae; padding:10px 12px;
@@ -61,6 +63,7 @@ export const UI_PAGE = `<!doctype html>
   <span id="state" class="badge">-</span>
   <span id="me" class="muted"></span>
   <span style="flex:1"></span>
+  <a class="ghost" href="/docs" target="_blank" rel="noreferrer">API docs</a>
   <button class="ghost" id="refresh">Refresh status</button>
 </header>
 
@@ -156,8 +159,17 @@ Never expose it. The API key you paste below is kept in this tab's sessionStorag
     </tr></thead><tbody></tbody></table>
   </section>
 
+  <section>
+    <h2>7. Pacing (anti-ban)</h2>
+    <div class="kv" id="limitsKv"><span>-</span><span></span></div>
+    <div class="row"><button class="ghost" id="loadLimits">GET /limits</button></div>
+    <p class="muted" style="margin:10px 0 0">This paces sends and caps volume. It does not
+      hide the automation - WhatsApp sees a normally linked device either way. Unwanted
+      messages are what gets accounts banned, and no setting fixes that.</p>
+  </section>
+
   <section class="full">
-    <h2>7. Response log</h2>
+    <h2>8. Response log</h2>
     <div class="row" style="margin:0 0 10px"><button class="ghost" id="clearLog">Clear</button></div>
     <pre id="log">waiting...</pre>
   </section>
@@ -417,6 +429,29 @@ el('loadGroups').onclick = async function () {
 };
 
 el('clearLog').onclick = function () { el('log').textContent = 'waiting...'; };
+
+function limitRow(kv, label, value) {
+  var k = document.createElement('span'); k.textContent = label;
+  var v = document.createElement('span'); v.textContent = value;
+  kv.appendChild(k); kv.appendChild(v);
+}
+
+el('loadLimits').onclick = async function () {
+  var r = await api('GET', '/limits');
+  var kv = el('limitsKv');
+  kv.textContent = '';
+  if (r.status !== 200) { limitRow(kv, 'error', 'see response log'); return; }
+  var b = r.body;
+  limitRow(kv, 'humanize', String(b.humanize));
+  limitRow(kv, 'sent last hour', b.sentLastHour + (b.hourlyLimit ? ' / ' + b.hourlyLimit : ' (no cap)'));
+  limitRow(kv, 'sent last 24h', b.sentLastDay + (b.dailyLimit ? ' / ' + b.dailyLimit : ' (no cap)'));
+  limitRow(kv, 'gap', b.pacing.minIntervalMs + 'ms + up to ' + b.pacing.jitterMs + 'ms jitter');
+  limitRow(kv, 'per-chat gap', b.pacing.perTargetMinIntervalMs ? b.pacing.perTargetMinIntervalMs + 'ms' : 'off');
+  limitRow(kv, 'typing', b.typing.enabled ? b.typing.charsPerSecond + ' cps, max ' + b.typing.maxMs + 'ms' : 'off');
+  limitRow(kv, 'quiet hours', b.quietHours
+    ? b.quietHours.window + ' ' + b.quietHours.timeZone + (b.quietHours.active ? ' (ACTIVE - sends refused)' : '')
+    : 'off');
+};
 
 setKeyState();
 pollHealth(false);

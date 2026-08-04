@@ -24,6 +24,54 @@ const schema = z.object({
     .optional(),
   SEND_MIN_INTERVAL_MS: z.coerce.number().int().min(0).max(60_000).default(1500),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(60),
+
+  // --- Anti-ban pacing (see src/wa/humanizer.ts) ---
+  // None of this hides the automation from WhatsApp: the account is a normally linked
+  // device and every send is attributable. What it reduces is the behaviour that
+  // actually triggers enforcement - uniform timing, bursts, round-the-clock activity.
+  HUMANIZE: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  // Random extra delay added on top of SEND_MIN_INTERVAL_MS. A gap that is always
+  // exactly 1500 ms is itself a machine signature; humans are irregular.
+  SEND_JITTER_MS: z.coerce.number().int().min(0).max(60_000).default(2500),
+  // Characters per second used to size the "typing…" pause before a send.
+  TYPING_CPS: z.coerce.number().min(1).max(100).default(18),
+  TYPING_MAX_MS: z.coerce.number().int().min(0).max(30_000).default(6000),
+  // Minimum gap between two messages to the *same* chat. Repeatedly hitting one group
+  // is what recipients report, and reports outweigh every other ban signal.
+  PER_TARGET_MIN_INTERVAL_MS: z.coerce.number().int().min(0).max(3_600_000).default(0),
+  // Rolling-window volume ceilings. 0 disables. Start low on a fresh number and raise
+  // over a week or two - there is no code for warm-up because the ramp is a decision,
+  // not an algorithm.
+  HOURLY_SEND_LIMIT: z.coerce.number().int().min(0).max(100_000).default(0),
+  DAILY_SEND_LIMIT: z.coerce.number().int().min(0).max(1_000_000).default(0),
+  // Local hours during which sends are refused, as "startHour-endHour" on a 24-hour
+  // clock, wrapping past midnight (e.g. "23-7"). Empty disables.
+  QUIET_HOURS: z
+    .string()
+    .regex(/^([01]?\d|2[0-3])-([01]?\d|2[0-3])$/, 'QUIET_HOURS must look like 23-7')
+    .optional(),
+  // IANA zone the quiet window is evaluated in, independent of the server's clock.
+  // Validated here rather than on first use: an unknown zone makes Intl throw, and
+  // discovering that at 3 a.m. inside a send is worse than refusing to boot.
+  QUIET_HOURS_TZ: z
+    .string()
+    .min(1)
+    .default('UTC')
+    .refine(isKnownTimeZone, 'QUIET_HOURS_TZ must be an IANA zone, e.g. Asia/Ho_Chi_Minh'),
+  // Name shown in WhatsApp > Linked devices, for this account's own operator. Keep it
+  // STABLE: a descriptor that changes on every reconnect is more anomalous than any
+  // particular value. It is a label, not a disguise.
+  DEVICE_NAME: z.string().min(1).max(40).default('Chrome (Linux)'),
+
+  // Swagger UI + OpenAPI document at /docs. Loopback-only regardless of this flag,
+  // because "Try it out" against /qr or /pair would link a device to the account.
+  ENABLE_DOCS: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   LOG_LEVEL: z
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
     .default('info'),
@@ -45,6 +93,15 @@ const schema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
 });
+
+function isKnownTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Reads the API key from a file when `API_KEY_FILE` is set. Under systemd this is

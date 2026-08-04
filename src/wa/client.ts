@@ -170,7 +170,12 @@ export class WaClient {
       auth: this.authState,
       logger: waLogger,
       ...(version ? { version } : {}),
-      browser: ['WhatsApp Relay', 'Chrome', '1.0.0'],
+      // Shown in WhatsApp > Linked devices. The old value here was 'WhatsApp Relay',
+      // which announced the automation in the account's own device list. This is a
+      // label, not a disguise - WhatsApp still sees a linked device either way - and it
+      // must stay stable, because a descriptor that changes every reconnect is more
+      // anomalous than any particular string.
+      browser: [config.DEVICE_NAME, 'Chrome', '120.0.0'],
       // History sync is what populates GET /chats; there is no RPC that lists chats.
       // Only chat metadata is kept (see chatStore) - the messages in the payload are
       // dropped, so this does not become a message archive.

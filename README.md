@@ -25,12 +25,18 @@ This README supersedes the install and code sections of
 - **`AUTH_DIR` is a full account credential.** Whoever can read those files can send and
   read messages as the linked account. Mode `0700`, owned by the service user, never
   committed, never in an unencrypted backup.
-- **`GET /qr`, `POST /pair` and the `/ui` console grant account takeover.** Scanning that QR
-  or typing that pairing code links a new device. They must never be reachable from the
-  internet — reach them through an SSH tunnel. `/ui` enforces loopback itself; the API key on
-  `/qr` and `/pair` is defence in depth, not the primary control.
+- **`GET /qr`, `POST /pair`, the `/ui` console and the `/docs` API browser grant account
+  takeover.** Scanning that QR or typing that pairing code links a new device, and Swagger
+  UI's "Try it out" reaches both routes. They must never be reachable from the internet —
+  reach them through an SSH tunnel. `/ui` and `/docs` enforce loopback themselves; the API
+  key on `/qr` and `/pair` is defence in depth, not the primary control.
 - **`202` is not a delivery guarantee.** It means the socket accepted the stanza.
   Delivery ACKs are logged, not yet persisted.
+- **Nothing here hides the automation from WhatsApp.** Baileys speaks the real
+  multi-device protocol, so the account is a normally linked device and every message is
+  attributable to it. The pacing controls reduce *spam-like behaviour*, which is what
+  enforcement actually keys on — they are not a disguise. See
+  [Anti-ban pacing](#anti-ban-pacing).
 
 The official [WhatsApp Business Platform Groups API](https://developers.facebook.com/docs/whatsapp)
 was evaluated and cannot replace this: it caps groups at **8 participants**, groups must be
@@ -66,9 +72,12 @@ http://localhost:3000/ui
 ```
 
 Paste the API key, then either scan the QR it renders or request an 8-character pairing
-code. The same page exercises `/health`, `/groups`, `/send`, and `POST /groups`, so no curl
-is needed to test. It is served to **loopback callers only** (see
+code. The same page exercises `/health`, `/groups`, `/chats`, `/send`, `POST /groups`, and
+`/limits`, so no curl is needed to test. It is served to **loopback callers only** (see
 [Test console](#test-console)).
+
+Interactive API reference at `http://localhost:3000/docs` — same loopback rule (see
+[API docs](#api-docs)).
 
 Or by hand:
 
@@ -109,15 +118,18 @@ npm run find-group -- "Team Ops"
 
 ## API
 
-Every route except `/health` requires the `X-API-Key` header. The key is compared in
-constant time. Bodies are capped at 64 KB; rate limiting is per API key
-(`RATE_LIMIT_PER_MINUTE`, default 60/min), falling back to per-IP for unauthenticated
+Every route requires the `X-API-Key` header except `/health` and the two browser surfaces,
+`/` `/ui` and `/docs` — a browser cannot attach a header to a page load or its static
+assets, so those are gated to **loopback** instead, which is the stronger control anyway.
+The key is compared in constant time. Bodies are capped at 64 KB; rate limiting is per API
+key (`RATE_LIMIT_PER_MINUTE`, default 60/min), falling back to per-IP for unauthenticated
 requests.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/health` | none | `200` only when connected **and** not send-blocked; otherwise `503`. |
 | `GET` | `/` `/ui` | none, loopback only | Test console. `403 local_only` for any other caller. |
+| `GET` | `/docs` | none, loopback only | Swagger UI. `/docs/json` is the raw OpenAPI 3.1 document. |
 | `GET` | `/qr` | key | Pairing QR. `409` when already linked, `503` when none is pending. |
 | `POST` | `/pair` | key | 8-character pairing code for `{"phoneNumber": "+62…"}`. Camera-free alternative to `/qr`. |
 | `GET` | `/groups` | key | Groups this account participates in, with JIDs. |
@@ -125,6 +137,32 @@ requests.
 | `POST` | `/groups` | key | Create a group. `201`. |
 | `GET` | `/groups/:jid/invite` | key | Invite link for an existing group. Usually needs admin. |
 | `POST` | `/send` | key | Send text. `202`. |
+| `GET` | `/limits` | key | Pacing state: sends this hour/day, caps, quiet hours, cooldowns. |
+
+### API docs
+
+```
+http://localhost:3000/docs        Swagger UI
+http://localhost:3000/docs/json   OpenAPI 3.1 document
+```
+
+Generated from the same JSON schemas Fastify validates with, so the document cannot drift
+from the implementation — a route whose schema changes changes its docs in the same commit.
+
+**Treat `/docs` as a takeover surface, not as documentation.** "Try it out" issues real
+requests, including `GET /qr` and `POST /pair`. It is therefore gated to loopback exactly
+like `/ui` (both the socket peer address **and** `req.ip`), and the guard sits in an
+encapsulated Fastify scope so it covers the plugin's static assets too, not just the HTML.
+`deploy/nginx.conf` denies the whole `/docs` prefix. `ENABLE_DOCS=false` removes it.
+
+The console page links to it, and the spec declares the `X-API-Key` security scheme
+globally with `/health` overriding it to none — so the "Authorize" button is filled in once
+and every operation carries the key. `/` and `/ui` are deliberately absent from the
+document: they serve one HTML page, not an API.
+
+Response schemas all set `additionalProperties: true`. That is load-bearing rather than
+lax: Fastify serializes with fast-json-stringify, which **drops** any property a response
+schema does not list, so a strict schema would silently truncate real responses.
 
 ### `GET /health`
 
@@ -281,8 +319,10 @@ in-memory with a 24 h TTL, so it covers webhook retries but **not** a restart in
 (see [Roadmap](#roadmap)).
 
 Sends are serialized through one queue with a minimum gap of `SEND_MIN_INTERVAL_MS`
-(default 1500 ms). Concurrent requests queue instead of racing — unpaced bursts are what
-gets numbers flagged.
+(default 1500 ms) **plus a random 0–`SEND_JITTER_MS`**, and a "typing…" pause sized from
+the message length precedes each one. Concurrent requests queue instead of racing. Volume
+caps and quiet hours are checked before the message is queued, so they answer `429`/`503`
+immediately rather than after a wait — see [Anti-ban pacing](#anti-ban-pacing).
 
 ### `POST /groups`
 
@@ -317,18 +357,109 @@ fetches an invite link as the remedy. It is still `201` — the group exists —
 `notAdded` is named for what is observable (they are not in the group), not `failedToAdd`,
 which would assert a cause the protocol never confirmed.
 
+---
+
+## Anti-ban pacing
+
+### What this cannot do
+
+**It cannot hide the automation.** Baileys implements WhatsApp's own multi-device
+protocol. The relay appears under **Linked devices** on the phone, the same as WhatsApp
+Web, and every message is cryptographically attributable to the account. There is no flag,
+user-agent, or device string that makes automated sending invisible, and any project
+claiming otherwise is selling theatre.
+
+So the goal is not evasion. It is to **not behave like spam**, because behaviour is what
+enforcement keys on:
+
+- perfectly uniform send intervals, which no human produces
+- bursts, and sustained volume no person would type
+- a constant rate around the clock, including 04:00
+- hammering the same chat
+
+And the strongest signal is none of those: it is **recipients blocking or reporting the
+account**. Pacing cannot fix unwanted messages. Only sending to people who expect them
+can, and that is a decision about what you send, not a setting.
+
+Deliberately **not** implemented: message-content spinning, number rotation, proxy
+rotation, fingerprint spoofing, and ban "recovery". They do not work against a first-party
+protocol client, and shipping them would imply a safety that does not exist.
+
+### What it does
+
+| Control | Var | Default | Effect |
+|---|---|---|---|
+| Jitter | `SEND_JITTER_MS` | `2500` | Random 0–2500 ms added to every gap. A gap that is always exactly 1500 ms is a cleaner fingerprint than sending fast. |
+| Typing indicator | `TYPING_CPS`, `TYPING_MAX_MS` | `18`, `6000` | `composing` presence for `len/18` seconds (±30 % randomised, capped), then `paused`, then the send. Sending 400 characters with no typing at all is the cheapest tell there is. |
+| Hourly cap | `HOURLY_SEND_LIMIT` | off | Rolling 60-minute ceiling → `429 hourly_limit`. |
+| Daily cap | `DAILY_SEND_LIMIT` | off | Rolling 24-hour ceiling → `429 daily_limit`. |
+| Per-chat cooldown | `PER_TARGET_MIN_INTERVAL_MS` | off | Minimum gap to the **same** JID → `429 target_cooldown`. |
+| Quiet hours | `QUIET_HOURS`, `QUIET_HOURS_TZ` | off, `UTC` | Refuses sends inside a local-time window → `503 quiet_hours`. |
+| Device label | `DEVICE_NAME` | `Chrome (Linux)` | What shows under **Linked devices**. A label, not a disguise. |
+
+`HUMANIZE=false` disables jitter and typing simulation (the caps and quiet hours still
+apply). Useful for tests where a deterministic gap matters.
+
+Windows are **rolling**, not calendar-aligned: `DAILY_SEND_LIMIT=200` means 200 in any
+24 hours, not 200 since midnight — a cap that resets at midnight lets you send 400 in two
+hours across the boundary.
+
+Quiet hours **wrap past midnight** (`23-7` = 23:00–06:59) and are evaluated in
+`QUIET_HOURS_TZ` via `Intl`, not the server clock, so the window means the same thing on a
+UTC host. Equal bounds (`5-5`) are ignored with a warning rather than guessed: they could
+mean "always" or "never" with equal plausibility.
+
+A slot is **reserved when the request is admitted**, not when the message leaves. Otherwise
+N concurrent requests all read the same count and blow past the cap together. If the send
+then fails, the slot is released — a send that never happened must not eat the day's
+budget. The one exception is the `unknown` outcome, which keeps its slot: it may well have
+been delivered, and a volume cap that under-counts is the wrong way to be wrong.
+
+There is **no warm-up ramp**. On a fresh number, start with small caps
+(`HOURLY_SEND_LIMIT=10`, `DAILY_SEND_LIMIT=50`) and raise them over a week or two. The
+right ramp depends on the number's age and who it is messaging, so it is a judgement call,
+not a default.
+
+The counters are in-memory and reset on restart, which hands back the full budget. Do not
+treat `/limits` as an audit trail.
+
+### `GET /limits`
+
+```json
+{
+  "humanize": true,
+  "sentLastHour": 3,
+  "sentLastDay": 41,
+  "hourlyLimit": 30,
+  "dailyLimit": 200,
+  "quietHours": { "window": "23:00-07:00", "timeZone": "Asia/Ho_Chi_Minh", "active": false },
+  "pacing": { "minIntervalMs": 1500, "jitterMs": 2500, "perTargetMinIntervalMs": 0 },
+  "typing": { "enabled": true, "charsPerSecond": 18, "maxMs": 6000 },
+  "counterNote": "Rolling windows over in-memory timestamps, reserved when a send is admitted rather than when it leaves. Lost on restart."
+}
+```
+
+`null` for `hourlyLimit`/`dailyLimit`/`quietHours` means that control is off. Unlike
+`/health`, this needs the API key: send volume is operational detail about the account,
+while `/health` is deliberately reachable by any watchdog. The console shows the same data
+under **Pacing (anti-ban)**.
+
+---
+
 ### Errors
 
 | Status | Body `error` | Meaning |
 |---|---|---|
 | `400` | `invalid_message`, `no_target`, `bad_request`, `invalid_participant`, `invalid_group_jid` | Client input. |
 | `401` | `unauthorized` | Missing or wrong `X-API-Key`. |
-| `403` | `local_only` | `/ui` requested from a non-loopback address. |
+| `403` | `local_only` | `/ui` or `/docs` requested from a non-loopback address. |
 | `404` | `not_found` | Unknown route. |
 | `409` | `already_linked`, `in_flight`, `invite_unavailable` | State conflict. |
 | `413` | — | Body over 64 KB (Fastify). |
-| `429` | — | Rate limit. |
+| `429` | — | Rate limit (`RATE_LIMIT_PER_MINUTE`). |
+| `429` | `hourly_limit`, `daily_limit`, `target_cooldown` | Pacing cap reached. Retry later; `message` says when. |
 | `503` | `wa_not_connected`, `queue_closed`, `qr_unavailable`, `pairing_unavailable` | Not currently usable; retry later. |
+| `503` | `quiet_hours` | Inside the configured quiet window. `503` not `429`, because the block is a property of the clock, not of the caller. |
 | `500` | `internal_error` | Generic on purpose — details stay in the log, since exceptions can carry message content. |
 
 ---
@@ -349,9 +480,24 @@ All of `.env.example`, validated with zod at startup. **Invalid or missing confi
 | `SEND_MIN_INTERVAL_MS` | `1500` | Minimum gap between sends. |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Per API key. |
 | `ENABLE_UI` | `true` | Test console at `/` and `/ui`. Loopback-only either way. |
+| `ENABLE_DOCS` | `true` | Swagger UI at `/docs`. Loopback-only either way. |
 | `SYNC_HISTORY` | `true` | Accept WhatsApp's history push, which populates `/chats`. |
+| `HUMANIZE` | `true` | Jitter and typing simulation. Caps and quiet hours apply regardless. |
+| `SEND_JITTER_MS` | `2500` | Random extra delay added to each gap. |
+| `TYPING_CPS` | `18` | Typing speed used to size the `composing` pause. |
+| `TYPING_MAX_MS` | `6000` | Cap on that pause. `0` disables typing simulation. |
+| `PER_TARGET_MIN_INTERVAL_MS` | `0` | Minimum gap to the same chat. `0` = off. |
+| `HOURLY_SEND_LIMIT` | `0` | Rolling 60-min ceiling. `0` = off. |
+| `DAILY_SEND_LIMIT` | `0` | Rolling 24-h ceiling. `0` = off. |
+| `QUIET_HOURS` | — | e.g. `23-7`. Wraps past midnight; equal bounds ignored. |
+| `QUIET_HOURS_TZ` | `UTC` | IANA zone the window is evaluated in, e.g. `Asia/Ho_Chi_Minh`. |
+| `DEVICE_NAME` | `Chrome (Linux)` | Label under **Linked devices**. Keep it stable. |
 | `LOG_LEVEL` | `info` | `trace`…`fatal`. |
 | `LOG_PRETTY` | `false` | `true` for local development only. |
+
+`QUIET_HOURS` and `QUIET_HOURS_TZ` are validated at startup like everything else: `99-7`
+and `Mars/Olympus` both exit `78` with the offending var named, rather than silently
+disabling the window.
 
 `AUTH_DIR` is resolved to an absolute path at load. A relative path silently creates a
 second, empty session whenever the working directory differs, which then reads as
@@ -402,6 +548,12 @@ PORT=3000
 SEND_MIN_INTERVAL_MS=1500
 RATE_LIMIT_PER_MINUTE=60
 LOG_LEVEL=info
+
+# Pacing. Start conservative on a fresh number and raise over a week or two.
+HOURLY_SEND_LIMIT=30
+DAILY_SEND_LIMIT=200
+QUIET_HOURS=23-7
+QUIET_HOURS_TZ=Asia/Ho_Chi_Minh
 EOF
 sudo chmod 0640 /etc/whatsapp-relay/relay.env
 sudo chown root:whatsappbot /etc/whatsapp-relay/relay.env
@@ -454,8 +606,9 @@ The QR also appears in `journalctl -u whatsapp-relay` as ASCII if the terminal r
 ### 6. Remote callers (optional)
 
 Only if something off-box must call `/send`. See `deploy/nginx.conf`, which terminates
-TLS, allowlists source IPs, and **explicitly refuses `/qr`**. If the caller runs on the
-same host, skip nginx and let it talk to `127.0.0.1:3000`.
+TLS, allowlists source IPs, and **explicitly refuses `/`, `/ui`, `/qr`, `/pair` and the
+whole `/docs` prefix** — every one of those is an account-takeover surface. If the caller
+runs on the same host, skip nginx and let it talk to `127.0.0.1:3000`.
 
 ---
 
@@ -515,7 +668,11 @@ gap.
 | `needs_relink` with reason `linking never completed` | The QR expired unscanned, or a pairing code was issued for a number other than the phone being linked. `creds.json` is half-written junk: stop the process, delete `AUTH_DIR`, start, and finish the link promptly (QR refreshes ~20 s, codes last ~60 s). |
 | `needs_relink` with reason `session logged out from the phone` | The device was removed under WhatsApp → Linked devices. Same fix, but the session was real, so check nobody unlinked it on purpose first. |
 | `/chats` lists groups but few or no 1:1 chats | The history push is still arriving, or `SYNC_HISTORY=false`. Check `historySync.complete`; poll until true. After a restart the in-memory store is empty and WhatsApp only re-pushes on a fresh link. |
-| Sends fail while `/health` shows `outgoingBlocked` | WhatsApp is throttling the account. Slow down; raise `SEND_MIN_INTERVAL_MS`. |
+| Sends fail while `/health` shows `outgoingBlocked` | WhatsApp is throttling the account. Slow down; raise `SEND_MIN_INTERVAL_MS`, and set `HOURLY_SEND_LIMIT`/`DAILY_SEND_LIMIT` if they are still off. |
+| `429 hourly_limit` / `daily_limit` | Your own cap, not WhatsApp's. `GET /limits` shows the counters and windows. They are in-memory, so a restart hands the budget back. |
+| `429 target_cooldown` | Two messages to the same chat inside `PER_TARGET_MIN_INTERVAL_MS`. `message` says how long to wait. |
+| `503 quiet_hours` | Inside `QUIET_HOURS`. Check `quietHours.timeZone` in `/limits` — it defaults to `UTC`, not the server's local zone. |
+| `/docs` returns `403 local_only` | Reached from a non-loopback address, or through a proxy. Use `ssh -L 3000:127.0.0.1:3000 user@host`; a forged `X-Forwarded-For` will not pass, since the socket peer is checked too. |
 | `403`/`forbidden` in the log | Account restricted. A new number is usually the only fix. |
 | Group send rejected but `/send` returned `202` | Announce-only group and this account is not admin. `GET /groups` shows `announceOnly`. |
 | `EACCES` from npm during install | `sudo -u` without `-H env HOME=…`. See step 2. |
@@ -574,14 +731,18 @@ src/
   wa/
     client.ts           socket lifecycle, ConnState, QR capture, reconnect/backoff
     groups.ts           list / create / invite code / JID normalization
-    sendQueue.ts        serialized sender with min-interval pacing
+    sendQueue.ts        serialized sender with jittered min-interval pacing
     send.ts             group send with honest accepted/unknown outcome
     chatStore.ts        conversation list fed by history-sync pushes; metadata only
+    humanizer.ts        jitter, typing simulation, volume caps, quiet hours
   http/
     server.ts           Fastify instance, hooks, error mapping
     auth.ts             timing-safe API key check (onRequest)
+    localOnly.ts        loopback gate for /ui and /docs (socket peer AND req.ip)
+    openapi.ts          OpenAPI document options + the loopback-gated Swagger UI
+    schemas.ts          response schemas; additionalProperties: true is load-bearing
     idempotency.ts      LRU keyed on Idempotency-Key
-    routes/             health, ui, qr, pair, groups, chats, send
+    routes/             health, ui, qr, pair, groups, chats, send, limits
     ui/page.ts          the test console, one self-contained HTML string
 deploy/
   whatsapp-relay.service
