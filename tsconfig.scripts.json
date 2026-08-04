@@ -1,0 +1,11 @@
+{
+  // Typecheck-only config for scripts/. They run through tsx and are never emitted,
+  // so they stay out of the build config to keep dist/ paths flat.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts"]
+}

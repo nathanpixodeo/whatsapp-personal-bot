@@ -1,0 +1,16 @@
+node_modules/
+dist/
+
+# WhatsApp auth state. This directory is a full account credential: anyone who can
+# read it can send and read messages as the linked account. Never commit it.
+data/
+auth_info*/
+*.session
+
+.env
+.env.*
+!.env.example
+
+*.log
+npm-debug.log*
+qr.png

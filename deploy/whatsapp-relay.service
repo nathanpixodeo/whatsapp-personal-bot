@@ -1,0 +1,74 @@
+[Unit]
+Description=WhatsApp Personal Group Relay
+Documentation=file:/opt/whatsapp-relay/README.md
+After=network-online.target
+Wants=network-online.target
+# Five failed starts in five minutes stops the loop. Without this, a bad config or a
+# revoked session turns into an endless restart that hammers WhatsApp's servers.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=whatsappbot
+Group=whatsappbot
+WorkingDirectory=/opt/whatsapp-relay
+ExecStart=/usr/bin/node /opt/whatsapp-relay/dist/index.js
+Environment=NODE_ENV=production
+
+# Non-secret settings.
+EnvironmentFile=/etc/whatsapp-relay/relay.env
+
+# The API key arrives as a systemd credential rather than an env var, so it is not
+# visible in `systemctl show` or /proc/<pid>/environ. Create the source file with:
+#   sudo install -d -m 0750 -o root -g whatsappbot /etc/whatsapp-relay
+#   openssl rand -hex 32 | sudo tee /etc/whatsapp-relay/api_key >/dev/null
+#   sudo chmod 0640 /etc/whatsapp-relay/api_key
+#   sudo chown root:whatsappbot /etc/whatsapp-relay/api_key
+LoadCredential=api_key:/etc/whatsapp-relay/api_key
+Environment=API_KEY_FILE=%d/api_key
+
+# systemd creates /var/lib/whatsapp-relay owned by the service user. 0700 because the
+# contents are a full WhatsApp account credential: whoever reads it can send and read
+# messages as the linked account.
+StateDirectory=whatsapp-relay
+StateDirectoryMode=0700
+Environment=AUTH_DIR=/var/lib/whatsapp-relay/auth
+
+Restart=always
+RestartSec=10
+# index.ts force-exits at 25s, so systemd should allow a little more than that.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# --- Hardening ---
+# Re-test the service after changing any of these.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# AF_NETLINK is needed by glibc's resolver; AF_UNIX by Node internals.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# No browser here, so the footprint is small. Raise if logs show OOM kills.
+MemoryMax=512M
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target
