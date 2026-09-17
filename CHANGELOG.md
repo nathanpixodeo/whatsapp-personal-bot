@@ -13,6 +13,24 @@ the major version is `0`, minor bumps may carry breaking changes.
 - `AGPL-3.0-or-later` licence, security policy, contribution guide, changelog, CI
   workflow and issue/pull-request templates.
 
+### Security
+
+- Resolved three dependency advisories flagged by the new `npm audit` CI job. Lockfile
+  only — no manifest change, and `baileys` stays pinned at `7.0.0-rc14`.
+  - `fastify` 5.11.2 → 5.12.5: schema validation bypass via root primitive coercion
+    mismatch ([GHSA-w2qp-rph6-63g4]) and `X-Forwarded-*` spoofing under the `trustProxy`
+    hop count ([GHSA-3m5p-2c4r-xxw2]). The second one touches this project directly,
+    since `trustProxy` is on — though the `/ui` and `/docs` loopback gate was already
+    checking the socket peer address alongside `req.ip` precisely so a forged
+    `X-Forwarded-For` could not pass on its own.
+  - `fast-uri` → 3.1.8 (transitive, via ajv): server-side request forgery and host
+    confusion, four advisories.
+  - `sharp` → 0.35.4 (transitive): libheif vulnerabilities, [GHSA-rgj7-g3m4-5g8c].
+
+[GHSA-w2qp-rph6-63g4]: https://github.com/advisories/GHSA-w2qp-rph6-63g4
+[GHSA-3m5p-2c4r-xxw2]: https://github.com/advisories/GHSA-3m5p-2c4r-xxw2
+[GHSA-rgj7-g3m4-5g8c]: https://github.com/advisories/GHSA-rgj7-g3m4-5g8c
+
 ## [0.1.0] - 2026-08-04
 
 First working relay. Not tagged in git; the version is what `package.json` declared at
