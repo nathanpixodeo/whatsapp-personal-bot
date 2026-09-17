@@ -1,0 +1,122 @@
+name: Bug report
+description: Something behaves differently from what the README documents.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Not for security problems.** Use
+        [private vulnerability reporting](https://github.com/nathanpixodeo/whatsapp-personal-bot/security/advisories/new)
+        instead — see [SECURITY.md](../blob/main/SECURITY.md).
+
+        **Redact before posting.** Never paste `API_KEY`, anything from `AUTH_DIR`, a QR
+        payload, a pairing code, or real message content.
+
+        Please check [Troubleshooting](../blob/main/README.md#troubleshooting) first — it
+        already covers exit `78`, `qr_unavailable`, `already_linked`, `needs_relink`,
+        `wa_not_connected`, the `429` pacing errors, `quiet_hours` and `local_only`.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The request you sent, with secrets removed.
+      placeholder: |
+        curl -s -X POST localhost:3000/send \
+          -H "X-API-Key: <redacted>" -H 'Content-Type: application/json' \
+          -d '{"message":"test","groupJid":"1203...@g.us"}'
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: health
+    attributes:
+      label: GET /health output
+      description: Run `curl -s localhost:3000/health`. Redact the `me` block.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: limits
+    attributes:
+      label: GET /limits output
+      description: Include this for any `429` or `quiet_hours` report.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: >
+        From `journalctl -u whatsapp-relay` or stdout. The logger already redacts keys and
+        QR payloads and never logs message text, but check before pasting.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit SHA
+      placeholder: '0.1.0, or f0b9a6f'
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node -v`. The floor is 22.9.
+      placeholder: v22.11.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: How is it running
+      options:
+        - Local (npm run dev)
+        - Local (npm start)
+        - Debian + systemd unit
+        - Debian + systemd behind nginx
+        - Docker or other container
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: >
+        The non-secret vars that matter — `HOST`, `PORT`, `HUMANIZE`, the pacing caps,
+        `QUIET_HOURS`, `QUIET_HOURS_TZ`, `SYNC_HISTORY`, `ENABLE_UI`, `ENABLE_DOCS`.
+        Never include `API_KEY`.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I read Troubleshooting in the README and it does not cover this.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I removed every secret, QR payload, pairing code and real message body.
+          required: true

@@ -3,10 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "description": "Authenticated HTTP relay that posts to WhatsApp groups through a linked personal account",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-or-later",
+  "author": "nathanpixodeo",
+  "homepage": "https://github.com/nathanpixodeo/whatsapp-personal-bot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathanpixodeo/whatsapp-personal-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nathanpixodeo/whatsapp-personal-bot/issues"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "fastify",
+    "webhook",
+    "notifications",
+    "self-hosted"
+  ],
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.9"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

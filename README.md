@@ -1,5 +1,10 @@
 # WhatsApp Personal Group Relay
 
+[![CI](https://github.com/nathanpixodeo/whatsapp-personal-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/nathanpixodeo/whatsapp-personal-bot/actions/workflows/ci.yml)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.9-green.svg)](https://nodejs.org)
+[![Status: MVP](https://img.shields.io/badge/status-MVP-orange.svg)](#roadmap)
+
 Authenticated HTTP endpoint that posts text into WhatsApp groups through a **linked
 personal account**, and creates new groups on demand.
 
@@ -13,6 +18,28 @@ multi-device protocol directly over a WebSocket. No browser, no Chromium, ~60 MB
 This README supersedes the install and code sections of
 `WHATSAPP_PERSONAL_GROUP_RELAY_DEBIAN.md`, which is kept as background. See
 [Corrections to the design doc](#corrections-to-the-design-doc).
+
+---
+
+## Contents
+
+- [**Read this before deploying**](#read-this-before-deploying) — ban risk, what
+  `AUTH_DIR` is, which routes are account-takeover surfaces
+- [Requirements](#requirements)
+- [Quick start (local)](#quick-start-local) · [Link the device](#link-the-device)
+- [API](#api) — [docs](#api-docs) · [`/health`](#get-health) · [`/qr`](#get-qr) ·
+  [`/pair`](#post-pair) · [console](#test-console) · [`/chats`](#get-chats) ·
+  [`/send`](#post-send) · [`POST /groups`](#post-groups) · [errors](#errors)
+- [Anti-ban pacing](#anti-ban-pacing) — [what it cannot do](#what-this-cannot-do) ·
+  [what it does](#what-it-does) · [`/limits`](#get-limits)
+- [Configuration](#configuration)
+- [Debian deployment](#debian-deployment)
+- [Operations](#operations)
+- [Troubleshooting](#troubleshooting)
+- [Corrections to the design doc](#corrections-to-the-design-doc)
+- [Roadmap](#roadmap)
+- [Project layout](#project-layout)
+- [Security](#security) · [Contributing](#contributing) · [License](#license)
 
 ---
 
@@ -749,3 +776,54 @@ deploy/
   nginx.conf
 scripts/find-group.ts   one-off: group name → JID
 ```
+
+---
+
+## Security
+
+**Do not report a security problem in a public issue.** Use
+[private vulnerability reporting](https://github.com/nathanpixodeo/whatsapp-personal-bot/security/advisories/new).
+
+[`SECURITY.md`](SECURITY.md) has the threat model, the operator hardening checklist, and
+the list of documented trade-offs that will be closed as working-as-intended — chief
+among them that this is an unofficial client and that the automation is not hidden.
+
+The two assets worth attacking are `AUTH_DIR`, which is a full account credential, and
+`API_KEY`. The account-takeover surfaces are `GET /qr`, `POST /pair`, `/ui` and `/docs`.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Read
+[Scope](CONTRIBUTING.md#scope) first: content spinning, number rotation, proxy rotation,
+fingerprint spoofing and ban "recovery" are refused on principle, not on quality.
+
+```bash
+npm ci && npm run typecheck && npm run build
+```
+
+CI runs exactly those two checks on Node 22 and 24. There is no automated test suite
+yet, so a pull request should say how the change was exercised by hand.
+
+Notable changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
+## License
+
+[GNU Affero General Public License v3.0 or later](LICENSE).
+
+Copyright © 2026 nathanpixodeo.
+
+This program is free software: you can redistribute it and/or modify it under the terms
+of the GNU Affero General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version. It is
+distributed in the hope that it will be useful, but **WITHOUT ANY WARRANTY**; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+the [LICENSE](LICENSE) file for the full text.
+
+AGPL section 13 is the clause that matters for a service like this one: **if you run a
+modified version and let others interact with it over a network, you must offer those
+users the corresponding source.** Running an unmodified copy for yourself carries no
+such obligation.
+
+Nothing in the licence changes the warning at the top of this README. WhatsApp's terms
+are a separate matter from the software licence, and automating a personal account can
+get the number banned.

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/nathanpixodeo/whatsapp-personal-bot/security/advisories/new
+    about: Private advisory. Never report a security problem in a public issue.
+  - name: Troubleshooting
+    url: https://github.com/nathanpixodeo/whatsapp-personal-bot#troubleshooting
+    about: Exit 78, qr_unavailable, needs_relink, wa_not_connected, the 429 pacing errors and local_only are all covered here.
+  - name: Read this before deploying
+    url: https://github.com/nathanpixodeo/whatsapp-personal-bot#read-this-before-deploying
+    about: Ban risk, what AUTH_DIR is, and which routes are account-takeover surfaces.

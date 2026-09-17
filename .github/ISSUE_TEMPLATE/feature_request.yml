@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a capability the relay does not have.
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read [Scope](../blob/main/CONTRIBUTING.md#scope) first.
+
+        Refused on principle, however well implemented: content spinning, number
+        rotation, proxy rotation, fingerprint or device spoofing, ban "recovery", and
+        anything aimed at bulk unsolicited messaging. The reasoning is in
+        [Anti-ban pacing](../blob/main/README.md#anti-ban-pacing) — Baileys speaks
+        WhatsApp's first-party protocol, so these do not work, and shipping them would
+        imply a safety that does not exist.
+
+        The [Roadmap](../blob/main/README.md#roadmap) lists what is already planned.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that the relay makes hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: >
+        What should happen. For a new route, sketch the request and response. For a new
+        setting, give the variable name and default.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including whatever you are doing as a workaround now.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is not on the refused list in CONTRIBUTING.md.
+          required: true
+        - label: I checked the Roadmap and this is not already planned.
+          required: true
